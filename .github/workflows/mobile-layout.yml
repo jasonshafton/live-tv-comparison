@@ -1,0 +1,49 @@
+name: Mobile layout
+on:
+  workflow_dispatch:
+  push:
+    paths: ['.github/workflows/mobile-layout.yml', 'index.html']
+permissions:
+  contents: read
+jobs:
+  phone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install playwright
+      - name: Check plan grid and controls in mobile Chrome
+        shell: python
+        run: |
+          from pathlib import Path
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as pw:
+              browser = pw.chromium.launch(channel='chrome')
+              for width in (320, 375, 390, 430):
+                  page = browser.new_page(viewport={'width': width, 'height': 667}, is_mobile=True, has_touch=True)
+                  errors = []
+                  page.on('pageerror', lambda e: errors.append(str(e)))
+                  page.goto(Path('index.html').resolve().as_uri())
+                  page.locator('.entry').first.wait_for()
+                  heights = page.locator('.entry').evaluate_all('(rows) => rows.map(r => r.getBoundingClientRect().bottom)')
+                  first_screen = sum(y <= 667 for y in heights)
+                  assert first_screen >= 3, (width, first_screen)
+                  assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth && window.innerWidth === ' + str(width))
+                  edges = page.locator('.rate').evaluate_all('(prices) => prices.map(p => p.getBoundingClientRect().right)')
+                  assert max(edges) - min(edges) <= 1
+                  page.get_by_role('button', name='Under $50').tap()
+                  assert page.locator('.entry').count() < len(edges)
+                  page.locator('.entry summary').first.tap()
+                  assert page.locator('details[open] .detail-body').is_visible()
+                  page.locator('.pick').nth(0).tap()
+                  page.locator('.pick').nth(1).tap()
+                  page.get_by_role('button', name='Compare 2 plans').tap()
+                  assert page.get_by_role('dialog').is_visible()
+                  page.get_by_role('button', name='Close comparison').tap()
+                  page.get_by_role('button', name='Table', exact=True).tap()
+                  assert page.locator('#tableContainer table').is_visible()
+                  page.get_by_role('button', name='Filters', exact=True).tap()
+                  assert page.get_by_role('searchbox').is_visible()
+                  assert not errors, errors
+                  print(f'{width}px: {first_screen} full rows, aligned prices, working details, compare, table and filters')
+                  page.close()
